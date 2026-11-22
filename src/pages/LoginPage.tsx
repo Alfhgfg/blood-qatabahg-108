@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { storageService } from '../services/storageService';
+import { useRegisterBackHandler } from '../services/backHandlerRegistry';
 
 interface LoginPageProps {
   onLoginSuccess: (user: UserAccount) => void;
@@ -26,6 +27,17 @@ type AuthMode = 'login' | 'register' | 'forgot';
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onGoToAdminLogin }) => {
   const [mode, setMode] = useState<AuthMode>('login');
+
+  useRegisterBackHandler(
+    'login-auth-mode',
+    mode !== 'login',
+    () => {
+      setMode('login');
+      setError('');
+      setSuccess('');
+    },
+    20
+  );
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');

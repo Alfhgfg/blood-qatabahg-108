@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   UserPlus, 
   Search, 
@@ -27,6 +27,7 @@ interface DonorsPageProps {
   onSelectDonor: (donor: Donor) => void;
   onEditDonor?: (donor: Donor) => void;
   initialBloodFilter?: BloodType | null;
+  filterSyncToken?: number;
   role?: UserRole;
   onOpenImportModal?: () => void;
   onRefreshDonors?: () => Promise<void> | void;
@@ -41,6 +42,7 @@ export const DonorsPage: React.FC<DonorsPageProps> = ({
   onSelectDonor,
   onEditDonor,
   initialBloodFilter = null,
+  filterSyncToken = 0,
   role = 'user',
   onOpenImportModal,
   onRefreshDonors,
@@ -54,6 +56,12 @@ export const DonorsPage: React.FC<DonorsPageProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportNotice, setExportNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (filterSyncToken > 0) {
+      setSelectedBlood(initialBloodFilter || 'all');
+    }
+  }, [filterSyncToken, initialBloodFilter]);
 
   const handleExportExcel = async () => {
     setIsExporting(true);

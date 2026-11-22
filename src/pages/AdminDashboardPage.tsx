@@ -72,6 +72,7 @@ import { auth } from '../firebase/config';
 import { AdminHospitalAdsTab } from '../components/AdminHospitalAdsTab';
 import { appUpdateService } from '../services/appUpdateService';
 import { createDefaultAppUpdateConfig } from '../lib/appUpdateValidator.js';
+import { useRegisterBackHandler } from '../services/backHandlerRegistry';
 
 interface AdminDashboardPageProps {
   role: UserRole;
@@ -197,6 +198,17 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({
   const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [deleteAllConfirmationText, setDeleteAllConfirmationText] = useState('');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  useRegisterBackHandler(
+    'admin-delete-all-modal',
+    showDeleteAllModal,
+    () => {
+      if (!isDeletingAll) {
+        setShowDeleteAllModal(false);
+      }
+    },
+    30
+  );
 
   // Excel & Email Settings State
   const [adminSettings, setAdminSettings] = useState<AdminSettings>({

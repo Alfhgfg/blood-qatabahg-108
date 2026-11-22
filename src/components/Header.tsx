@@ -9,7 +9,8 @@ import {
   Moon, 
   Sunrise, 
   Sunset,
-  Menu
+  Menu,
+  ArrowRight
 } from 'lucide-react';
 import { AppNotification, UserAccount, UserRole } from '../types';
 
@@ -24,6 +25,8 @@ interface HeaderProps {
   onLogout?: () => void;
   onOpenSidebar?: () => void;
   isSidebarOpen?: boolean;
+  canGoBack?: boolean;
+  onGoBack?: () => void;
 }
 
 interface GreetingData {
@@ -86,7 +89,9 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onLogout,
   onOpenSidebar,
-  isSidebarOpen = false
+  isSidebarOpen = false,
+  canGoBack = false,
+  onGoBack
 }) => {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const [logoTapCount, setLogoTapCount] = useState(0);
@@ -141,6 +146,19 @@ export const Header: React.FC<HeaderProps> = ({
               className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 hover:border-rose-200 flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-rose-600"
             >
               <Menu className="w-5 h-5" />
+            </button>
+          )}
+
+          {canGoBack && onGoBack && (
+            <button
+              type="button"
+              onClick={onGoBack}
+              aria-label="رجوع للصفحة السابقة"
+              title="رجوع"
+              data-testid="header-back-button"
+              className="min-w-[40px] min-h-[40px] sm:min-w-[44px] sm:min-h-[44px] rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 hover:border-rose-200 flex items-center justify-center transition-colors cursor-pointer shrink-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-rose-600"
+            >
+              <ArrowRight className="w-5 h-5" />
             </button>
           )}
 

@@ -12,12 +12,14 @@ import {
   X
 } from 'lucide-react';
 import { District, Donor, UserRole, ActivePage } from '../types';
+import { useRegisterBackHandler } from '../services/backHandlerRegistry';
 
 interface DistrictsPageProps {
   role: UserRole;
   districts: District[];
   donors: Donor[];
   onNavigate: (page: ActivePage) => void;
+  onBack?: () => void;
   onOpenRoleModal: () => void;
   onAddDistrict: (name: string, areas: string[]) => void;
   onUpdateDistrict: (district: District) => void;
@@ -29,6 +31,7 @@ export const DistrictsPage: React.FC<DistrictsPageProps> = ({
   districts,
   donors,
   onNavigate,
+  onBack,
   onOpenRoleModal,
   onAddDistrict,
   onUpdateDistrict,
@@ -38,6 +41,13 @@ export const DistrictsPage: React.FC<DistrictsPageProps> = ({
   const [newAreaInputs, setNewAreaInputs] = useState<Record<string, string>>({});
   const [showAddDistrictModal, setShowAddDistrictModal] = useState(false);
   const [initialAreasStr, setInitialAreasStr] = useState('');
+
+  useRegisterBackHandler(
+    'districts-add-modal',
+    showAddDistrictModal,
+    () => setShowAddDistrictModal(false),
+    30
+  );
 
   // If role is not admin, protect the page
   if (role !== 'admin') {
@@ -107,7 +117,7 @@ export const DistrictsPage: React.FC<DistrictsPageProps> = ({
       <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => onNavigate('admin')}
+            onClick={() => (onBack ? onBack() : onNavigate('admin'))}
             className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer transition-colors"
             title="العودة للوحة الإدارة"
           >

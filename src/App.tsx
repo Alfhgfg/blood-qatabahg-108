@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { Droplet, Loader2, Lock } from 'lucide-react';
 import { 
   ActivePage, 
@@ -24,6 +24,15 @@ import {
   snoozeVersionForSession
 } from './services/appUpdateService';
 import { saveAndShareFile } from './services/nativeFileSaver';
+import {
+  NavEntry,
+  NavOptions,
+  pushNavEntry,
+  popNavEntry,
+  resetNavStack
+} from './lib/navigationStack.js';
+import { nativeNavigationService } from './services/nativeNavigationService';
+import { backHandlerRegistry, useRegisterBackHandler } from './services/backHandlerRegistry';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { SidebarDrawer } from './components/SidebarDrawer';
@@ -97,7 +106,16 @@ export default function App() {
   const [isLoadingDonors, setIsLoadingDonors] = useState<boolean>(false);
   const [donorLoadError, setDonorLoadError] = useState<string | null>(null);
   const [isAdminLoginView, setIsAdminLoginView] = useState<boolean>(false);
-  const [activePage, setActivePage] = useState<ActivePage>(() => {
+  const [selectedHospitalAdId, setSelectedHospitalAdId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('qaatabah_selected_hospital_ad_id_v1');
+    } catch {
+      return null;
+    }
+  });
+
+  const [historyStack, setHistoryStack] = useState<NavEntry[]>(() => {
+    let initialPage: ActivePage = 'home';
     try {
       const saved = localStorage.getItem('qaatabah_blood_last_page_v1') as ActivePage | null;
       const user = storageService.getCurrentUser();
@@ -116,24 +134,130 @@ export default function App() {
         'hospital-ad'
       ];
       if (saved && validPages.includes(saved)) {
-        if (saved === 'admin' && user?.role !== 'admin') {
-          return 'home';
+        if ((saved === 'admin' || saved === 'districts') && user?.role !== 'admin') {
+          initialPage = 'home';
+        } else {
+          initialPage = saved;
         }
-        return saved;
+      } else {
+        initialPage = user?.role === 'admin' ? 'admin' : 'home';
       }
-      return user?.role === 'admin' ? 'admin' : 'home';
     } catch {
-      return 'home';
+      initialPage = 'home';
     }
+
+    let initialAdId: string | null = null;
+    try {
+      initialAdId = localStorage.getItem('qaatabah_selected_hospital_ad_id_v1');
+    } catch {}
+
+    return resetNavStack(initialPage, {
+      hospitalAdId: initialPage === 'hospital-ad' ? initialAdId : null
+    });
   });
+
+  const historyStackRef = useRef<NavEntry[]>(historyStack);
+  historyStackRef.current = historyStack;
+
+  const currentEntry = historyStack[historyStack.length - 1];
+  const activePage = currentEntry.page;
+  const previousEntry = historyStack.length > 1 ? historyStack[historyStack.length - 2] : null;
+  const canGoBack = historyStack.length > 1;
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const navigateToPage = (page: ActivePage) => {
-    setActivePage(page);
+  // Scroll preservation per history entry key
+  const scrollPositionsRef = useRef<Record<string, number>>({});
+  const pendingScrollRestoreRef = useRef<{ y: number; behavior: ScrollBehavior } | null>(null);
+  const ignorePopstateCountRef = useRef<number>(0);
+  const [historyGuardRevision, setHistoryGuardRevision] = useState(0);
+
+  // Persist active page across reloads
+  useEffect(() => {
     try {
-      localStorage.setItem('qaatabah_blood_last_page_v1', page);
+      localStorage.setItem('qaatabah_blood_last_page_v1', activePage);
     } catch {}
-  };
+  }, [activePage]);
+
+  // Initialize browser history state on mount
+  useEffect(() => {
+    try {
+      const rootEntry = historyStackRef.current[0];
+      window.history.replaceState(
+        {
+          appNav: true,
+          depth: historyStackRef.current.length,
+          key: rootEntry?.key || 'root',
+          isOverlay: false
+        },
+        ''
+      );
+    } catch {}
+  }, []);
+
+  // Restore scroll position synchronously after React toggles hidden/block wrappers
+  useLayoutEffect(() => {
+    const pending = pendingScrollRestoreRef.current;
+    if (!pending) return;
+    pendingScrollRestoreRef.current = null;
+    window.scrollTo({ top: pending.y, behavior: pending.behavior });
+    const rafId = requestAnimationFrame(() => {
+      window.scrollTo({ top: pending.y, behavior: 'auto' });
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [currentEntry.key]);
+
+  const navigateToPage = useCallback((page: ActivePage, options: NavOptions = {}) => {
+    const currentStack = historyStackRef.current;
+    const current = currentStack[currentStack.length - 1];
+    const res = pushNavEntry(currentStack, page, options);
+
+    if (!res.changed) {
+      return;
+    }
+
+    if (current) {
+      scrollPositionsRef.current[current.key] = window.scrollY;
+    }
+    pendingScrollRestoreRef.current = { y: 0, behavior: 'auto' };
+
+    historyStackRef.current = res.stack;
+    setHistoryStack(res.stack);
+
+    try {
+      const nextState = {
+        appNav: true,
+        depth: res.stack.length,
+        key: res.current.key,
+        isOverlay: false
+      };
+      if (window.history.state?.isOverlay) {
+        window.history.replaceState(nextState, '');
+      } else {
+        window.history.pushState(nextState, '');
+      }
+    } catch {}
+  }, []);
+
+  const resetHistoryStack = useCallback((initialPage: ActivePage = 'home', options: NavOptions = {}) => {
+    const nextStack = resetNavStack(initialPage, options);
+    scrollPositionsRef.current = {};
+    pendingScrollRestoreRef.current = { y: 0, behavior: 'auto' };
+    historyStackRef.current = nextStack;
+    setHistoryStack(nextStack);
+
+    try {
+      window.history.replaceState(
+        {
+          appNav: true,
+          depth: 1,
+          key: nextStack[0].key,
+          isOverlay: false
+        },
+        ''
+      );
+    } catch {}
+  }, []);
 
   // Core Data loaded from offline storage
   const [donors, setDonors] = useState<Donor[]>([]);
@@ -142,13 +266,6 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [hospitalAds, setHospitalAds] = useState<HospitalAd[]>([]);
   const [selectedHospitalAd, setSelectedHospitalAd] = useState<HospitalAd | null>(null);
-  const [selectedHospitalAdId, setSelectedHospitalAdId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('qaatabah_selected_hospital_ad_id_v1');
-    } catch {
-      return null;
-    }
-  });
 
   const handleSelectHospitalAd = (ad: HospitalAd) => {
     setSelectedHospitalAd(ad);
@@ -156,8 +273,7 @@ export default function App() {
     try {
       localStorage.setItem('qaatabah_selected_hospital_ad_id_v1', ad.id);
     } catch {}
-    navigateToPage('hospital-ad');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigateToPage('hospital-ad', { hospitalAdId: ad.id });
   };
 
   // Centralized Donor Refresh Directly from Firebase Firestore
@@ -195,6 +311,7 @@ export default function App() {
 
   // Shared blood filter
   const [selectedBloodFilter, setSelectedBloodFilter] = useState<BloodType | null>(null);
+  const [bloodFilterToken, setBloodFilterToken] = useState<number>(0);
 
   // Toast alert
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -208,6 +325,24 @@ export default function App() {
     downloadedBytes: 0,
     totalBytes: 0
   });
+
+  // Back handler registry subscription (page-local modals & subviews)
+  const [hasRegisteredOverlay, setHasRegisteredOverlay] = useState(() =>
+    backHandlerRegistry.hasActiveHandlers()
+  );
+
+  useEffect(() => {
+    return backHandlerRegistry.subscribe(() => {
+      setHasRegisteredOverlay(backHandlerRegistry.hasActiveHandlers());
+    });
+  }, []);
+
+  useRegisterBackHandler(
+    'prelogin-admin-view',
+    !currentUser && isAdminLoginView,
+    () => setIsAdminLoginView(false),
+    10
+  );
 
   const runAppUpdateCheck = useCallback(async (manual = false, swWaitingReady = false) => {
     try {
@@ -522,12 +657,232 @@ export default function App() {
     await firestoreService.setUser(updatedUser);
   };
 
+  const popStackEntryAndRestore = useCallback(
+    (fromPopstate: boolean): boolean => {
+      const currentStack = historyStackRef.current;
+      const res = popNavEntry(currentStack);
+      if (!res.canGoBack || !res.current) {
+        return false;
+      }
+
+      if (res.popped) {
+        delete scrollPositionsRef.current[res.popped.key];
+      }
+
+      const restoredY = scrollPositionsRef.current[res.current.key] ?? 0;
+      pendingScrollRestoreRef.current = { y: restoredY, behavior: 'auto' };
+
+      if (res.current.page === 'hospital-ad' && res.current.hospitalAdId) {
+        setSelectedHospitalAdId(res.current.hospitalAdId);
+        const matched = hospitalAds.find((ad) => ad.id === res.current!.hospitalAdId) || null;
+        if (matched) setSelectedHospitalAd(matched);
+      }
+
+      historyStackRef.current = res.stack;
+      setHistoryStack(res.stack);
+
+      if (!fromPopstate) {
+        try {
+          if (typeof window.history.state?.depth === 'number' && window.history.state.depth > 1) {
+            ignorePopstateCountRef.current += 1;
+            window.history.back();
+          }
+        } catch {}
+      }
+
+      return true;
+    },
+    [hospitalAds]
+  );
+
+  const goBack = useCallback(
+    (fallbackPage?: ActivePage) => {
+      if (popStackEntryAndRestore(false)) {
+        return true;
+      }
+      if (fallbackPage && fallbackPage !== historyStackRef.current[historyStackRef.current.length - 1]?.page) {
+        navigateToPage(fallbackPage);
+        return true;
+      }
+      return false;
+    },
+    [popStackEntryAndRestore, navigateToPage]
+  );
+
+  const hasGlobalOverlay =
+    isUpdateModalOpen ||
+    isPushPromptOpen ||
+    isImportModalOpen ||
+    isInstallModalOpen ||
+    isRoleModalOpen ||
+    isNotificationsOpen ||
+    isAddDonorOpen ||
+    isAddRequestOpen ||
+    Boolean(selectedDonor) ||
+    Boolean(selectedRequest) ||
+    isSidebarOpen;
+
+  const anyOverlayOpen = hasGlobalOverlay || hasRegisteredOverlay;
+  const prevAnyOverlayOpenRef = useRef(anyOverlayOpen);
+
+  // Synchronize browser history guard entry when overlays/drawers open or close
+  useEffect(() => {
+    const wasOpen = prevAnyOverlayOpenRef.current;
+    prevAnyOverlayOpenRef.current = anyOverlayOpen;
+
+    try {
+      if (anyOverlayOpen && (!wasOpen || !window.history.state?.isOverlay)) {
+        if (!window.history.state?.isOverlay) {
+          const current = historyStackRef.current[historyStackRef.current.length - 1];
+          window.history.pushState(
+            {
+              appNav: true,
+              depth: historyStackRef.current.length,
+              key: current?.key || 'root',
+              isOverlay: true
+            },
+            ''
+          );
+        }
+      } else if (!anyOverlayOpen && wasOpen) {
+        if (window.history.state?.isOverlay) {
+          ignorePopstateCountRef.current += 1;
+          window.history.back();
+        }
+      }
+    } catch {}
+  }, [anyOverlayOpen, historyGuardRevision]);
+
+  const closeTopOverlayRef = useRef<() => 'none' | 'closed' | 'blocked'>(() => 'none');
+  closeTopOverlayRef.current = () => {
+    if (isUpdateModalOpen) {
+      const isAndroidUpdate = updateCheckResult?.platform === 'android';
+      const isMandatoryUpdate = Boolean(
+        isAndroidUpdate
+          ? updateCheckResult?.remoteConfig?.android?.mandatory
+          : updateCheckResult?.remoteConfig?.web?.mandatory
+      );
+      const phase = updateProgressState.phase;
+      const isUpdateBusy =
+        phase === 'downloading' ||
+        phase === 'verifying' ||
+        phase === 'ready_to_install' ||
+        phase === 'installing';
+
+      if (!isMandatoryUpdate && !isUpdateBusy) {
+        handleDismissUpdateLater();
+        return 'closed';
+      }
+      return 'blocked';
+    }
+    if (isPushPromptOpen) {
+      setIsPushPromptOpen(false);
+      return 'closed';
+    }
+    if (isImportModalOpen) {
+      setIsImportModalOpen(false);
+      return 'closed';
+    }
+    if (isInstallModalOpen) {
+      setIsInstallModalOpen(false);
+      return 'closed';
+    }
+    if (isRoleModalOpen) {
+      setIsRoleModalOpen(false);
+      return 'closed';
+    }
+    if (isNotificationsOpen) {
+      setIsNotificationsOpen(false);
+      return 'closed';
+    }
+    if (isAddDonorOpen) {
+      setIsAddDonorOpen(false);
+      setDonorToEdit(null);
+      return 'closed';
+    }
+    if (isAddRequestOpen) {
+      setIsAddRequestOpen(false);
+      return 'closed';
+    }
+    if (selectedDonor) {
+      setSelectedDonor(null);
+      return 'closed';
+    }
+    if (selectedRequest) {
+      setSelectedRequest(null);
+      return 'closed';
+    }
+    if (backHandlerRegistry.handleTop()) {
+      return 'closed';
+    }
+    if (isSidebarOpen) {
+      setIsSidebarOpen(false);
+      return 'closed';
+    }
+    return 'none';
+  };
+
+  // Expose synchronous native Android back bridge + handle Web browser popstate
+  useEffect(() => {
+    const handleNativeBack = (): boolean => {
+      const overlayOutcome = closeTopOverlayRef.current();
+      if (overlayOutcome === 'closed' || overlayOutcome === 'blocked') {
+        return true;
+      }
+      if (popStackEntryAndRestore(false)) {
+        return true;
+      }
+      return false;
+    };
+
+    const handlePopState = (event: PopStateEvent) => {
+      if (ignorePopstateCountRef.current > 0) {
+        ignorePopstateCountRef.current -= 1;
+        return;
+      }
+
+      const overlayOutcome = closeTopOverlayRef.current();
+      if (overlayOutcome === 'closed' || overlayOutcome === 'blocked') {
+        setHistoryGuardRevision((n) => n + 1);
+        return;
+      }
+
+      const stateDepth = typeof event.state?.depth === 'number' ? event.state.depth : null;
+      if (stateDepth !== null && stateDepth >= historyStackRef.current.length) {
+        return;
+      }
+
+      popStackEntryAndRestore(true);
+    };
+
+    (window as any).__handleAppNativeBack = handleNativeBack;
+    (window as any).__appBackHandlerReady = true;
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      (window as any).__appBackHandlerReady = false;
+      try {
+        delete (window as any).__handleAppNativeBack;
+      } catch {}
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [popStackEntryAndRestore]);
+
   const handleLogout = () => {
     setIsSidebarOpen(false);
+    setSelectedDonor(null);
+    setSelectedRequest(null);
+    setIsAddDonorOpen(false);
+    setIsAddRequestOpen(false);
+    setIsNotificationsOpen(false);
+    setIsRoleModalOpen(false);
+    setIsInstallModalOpen(false);
+    setIsImportModalOpen(false);
+    setIsAdminLoginView(false);
     storageService.logout();
     setCurrentUser(null);
     setRole('user');
-    navigateToPage('home');
+    resetHistoryStack('home');
     triggerToast('تم تسجيل الخروج بنجاح 👋');
   };
 
@@ -540,26 +895,26 @@ export default function App() {
         const targetReq = requests.find((r) => r.id === reqId) || storageService.getRequests().find((r) => r.id === reqId);
         if (targetReq) {
           setSelectedRequest(targetReq);
-          setActivePage('requests');
+          navigateToPage('requests');
           // Clean query params from URL without page reload
           const url = new URL(window.location.href);
           url.searchParams.delete('openRequest');
-          window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+          window.history.replaceState(window.history.state || {}, '', url.pathname + (url.search ? url.search : ''));
         } else {
           firestoreService.fetchRequests().then((fresh) => {
             const found = fresh.find((r) => r.id === reqId);
             if (found) {
               setSelectedRequest(found);
-              setActivePage('requests');
+              navigateToPage('requests');
               const url = new URL(window.location.href);
               url.searchParams.delete('openRequest');
-              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+              window.history.replaceState(window.history.state || {}, '', url.pathname + (url.search ? url.search : ''));
             }
           }).catch(() => {});
         }
       }
     } catch {}
-  }, [requests]);
+  }, [requests, navigateToPage]);
 
   // Service Worker message listener for OPEN_REQUEST_NOTIFICATION
   useEffect(() => {
@@ -569,13 +924,13 @@ export default function App() {
         const targetReq = requests.find((r) => r.id === reqId) || storageService.getRequests().find((r) => r.id === reqId);
         if (targetReq) {
           setSelectedRequest(targetReq);
-          setActivePage('requests');
+          navigateToPage('requests');
         } else {
           firestoreService.fetchRequests().then((fresh) => {
             const found = fresh.find((r) => r.id === reqId);
             if (found) {
               setSelectedRequest(found);
-              setActivePage('requests');
+              navigateToPage('requests');
             }
           }).catch(() => {});
         }
@@ -595,13 +950,13 @@ export default function App() {
         const targetReq = requests.find((r) => r.id === reqId) || storageService.getRequests().find((r) => r.id === reqId);
         if (targetReq) {
           setSelectedRequest(targetReq);
-          setActivePage('requests');
+          navigateToPage('requests');
         } else {
           firestoreService.fetchRequests().then((fresh) => {
             const found = fresh.find((r) => r.id === reqId);
             if (found) {
               setSelectedRequest(found);
-              setActivePage('requests');
+              navigateToPage('requests');
             }
           }).catch(() => {});
         }
@@ -621,7 +976,7 @@ export default function App() {
       window.removeEventListener('PUSH_NOTIFICATION_RECEIVED', handlePushEvent);
       window.removeEventListener('OPEN_REQUEST_NOTIFICATION', handleOpenReqEvent);
     };
-  }, [requests]);
+  }, [requests, navigateToPage]);
 
   // Donor Handlers
   const handleOpenAddDonor = () => {
@@ -861,6 +1216,28 @@ export default function App() {
     (r) => r.status === 'open' && (r.urgency === 'critical' || r.urgency === 'urgent')
   ).length;
 
+  const mountedPages = useMemo(() => {
+    return new Set<ActivePage>(historyStack.map((entry) => entry.page));
+  }, [historyStack]);
+
+  const PAGE_BACK_LABELS: Record<ActivePage, string> = {
+    home: 'العودة إلى الرئيسية',
+    donors: 'العودة إلى المتبرعين',
+    requests: 'العودة إلى طلبات الدم',
+    info: 'العودة إلى معلومات التبرع',
+    admin: 'العودة إلى لوحة الإدارة',
+    districts: 'العودة إلى المديريات',
+    profile: 'العودة إلى الملف الشخصي',
+    history: 'العودة إلى سجل التبرعات',
+    about: 'العودة إلى من نحن',
+    contact: 'العودة إلى اتصل بنا',
+    settings: 'العودة إلى الإعدادات',
+    'hospital-ad': 'العودة إلى الإعلان السابق'
+  };
+
+  // Expose native exit helper cleanly in case an explicit exit button is needed later
+  void nativeNavigationService;
+
   // If authentication check is still in progress, show clean splash screen
   if (!isAuthReady) {
     return (
@@ -890,12 +1267,13 @@ export default function App() {
     if (isAdminLoginView) {
       return (
         <AdminLoginPage
+          isActive={true}
           onLoginSuccess={(adminUser) => {
             storageService.setCurrentUser(adminUser);
             setCurrentUser(adminUser);
             setRole(adminUser.role);
             setIsAdminLoginView(false);
-            navigateToPage('admin');
+            resetHistoryStack('admin');
             refreshDonors();
             triggerToast('مرحباً بك في لوحة تحكم المسؤول 🛡️');
           }}
@@ -911,7 +1289,7 @@ export default function App() {
           setCurrentUser(user);
           setRole(user.role);
           const targetPage: ActivePage = user.role === 'admin' ? 'admin' : 'home';
-          navigateToPage(targetPage);
+          resetHistoryStack(targetPage);
           refreshDonors();
           triggerToast(`مرحباً بك، ${user.fullName} 👋`);
         }}
@@ -936,12 +1314,20 @@ export default function App() {
         onOpenRoleModal={() => setIsRoleModalOpen(true)}
         notifications={notifications}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onNavigateHome={() => navigateToPage('home')}
+        onNavigateHome={() => {
+          if (activePage === 'home') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            navigateToPage('home');
+          }
+        }}
         onOpenInstallModal={() => setIsInstallModalOpen(true)}
         currentUser={currentUser}
         onLogout={handleLogout}
         onOpenSidebar={() => setIsSidebarOpen(true)}
         isSidebarOpen={isSidebarOpen}
+        canGoBack={canGoBack}
+        onGoBack={() => goBack()}
       />
 
       {/* RTL Right-Side Navigation Sidebar Drawer */}
@@ -960,184 +1346,215 @@ export default function App() {
         unreadNotificationsCount={notifications.filter((n) => !n.read).length}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area — Keep pages in the history stack mounted to preserve form/filter state */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 pt-5">
-        {activePage === 'home' && (
-          <HomePage
-            donors={donors}
-            requests={requests}
-            hospitalAds={hospitalAds}
-            onNavigate={(p) => navigateToPage(p)}
-            onOpenAddDonor={handleOpenAddDonor}
-            onOpenAddRequest={() => setIsAddRequestOpen(true)}
-            onSelectDonor={(d) => setSelectedDonor(d)}
-            onSelectRequest={(r) => setSelectedRequest(r)}
-            onSelectHospitalAd={handleSelectHospitalAd}
-            onFilterBloodType={(t) => setSelectedBloodFilter(t)}
-            selectedBloodType={selectedBloodFilter}
-            onOpenInstallModal={() => setIsInstallModalOpen(true)}
-            onOpenNotifications={() => setIsNotificationsOpen(true)}
-            role={role}
-          />
-        )}
-
-        {activePage === 'hospital-ad' && (
-          <HospitalAdDetailPage
-            ad={
-              (selectedHospitalAd && hospitalAds.find((item) => item.id === selectedHospitalAd.id)) ||
-              selectedHospitalAd ||
-              (selectedHospitalAdId ? hospitalAds.find((item) => item.id === selectedHospitalAdId) || null : null)
-            }
-            onBack={() => {
-              navigateToPage('home');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            onTriggerToast={triggerToast}
-          />
-        )}
-
-        {activePage === 'donors' && (
-          <DonorsPage
-            donors={donors}
-            districts={districts}
-            onOpenAddDonor={handleOpenAddDonor}
-            onSelectDonor={(d) => setSelectedDonor(d)}
-            onEditDonor={handleOpenEditDonor}
-            initialBloodFilter={selectedBloodFilter}
-            role={role}
-            onOpenImportModal={() => setIsImportModalOpen(true)}
-            onRefreshDonors={refreshDonors}
-            isLoadingDonors={isLoadingDonors}
-            donorLoadError={donorLoadError}
-          />
-        )}
-
-        {activePage === 'requests' && (
-          <RequestsPage
-            requests={requests}
-            onOpenAddRequest={() => setIsAddRequestOpen(true)}
-            onSelectRequest={(r) => setSelectedRequest(r)}
-          />
-        )}
-
-        {activePage === 'info' && <DonationInfoPage />}
-
-        {activePage === 'admin' && (
-          role === 'admin' ? (
-            <AdminDashboardPage
-              role={role}
+        {mountedPages.has('home') && (
+          <div className={activePage === 'home' ? 'block' : 'hidden'}>
+            <HomePage
               donors={donors}
               requests={requests}
+              hospitalAds={hospitalAds}
               onNavigate={(p) => navigateToPage(p)}
-              onOpenRoleModal={() => setIsRoleModalOpen(true)}
-              onEditDonor={handleOpenEditDonor}
-              onDeleteDonor={handleDeleteDonor}
-              onDeleteAllDonors={handleDeleteAllDonors}
               onOpenAddDonor={handleOpenAddDonor}
-              onToggleDonorAvailability={handleToggleDonorAvailability}
-              onUpdateRequestStatus={handleUpdateRequestStatus}
-              onDeleteRequest={handleDeleteRequest}
-              onExportBackup={handleExportBackup}
-              onImportBackup={handleImportBackup}
-              onResetDefaults={handleResetDefaults}
+              onOpenAddRequest={() => setIsAddRequestOpen(true)}
               onSelectDonor={(d) => setSelectedDonor(d)}
               onSelectRequest={(r) => setSelectedRequest(r)}
-              onOpenImportModal={() => setIsImportModalOpen(true)}
-              onLogout={handleLogout}
-              currentUser={currentUser}
-              hospitalAds={hospitalAds}
-              onHospitalAdsChange={(updatedAds) => setHospitalAds(updatedAds)}
+              onSelectHospitalAd={handleSelectHospitalAd}
+              onFilterBloodType={(t) => {
+                setSelectedBloodFilter(t);
+                setBloodFilterToken((c) => c + 1);
+              }}
+              selectedBloodType={selectedBloodFilter}
+              onOpenInstallModal={() => setIsInstallModalOpen(true)}
+              onOpenNotifications={() => setIsNotificationsOpen(true)}
+              role={role}
             />
-          ) : (
-            <div className="py-4">
-              <AdminLoginPage
-                onLoginSuccess={(adminUser) => {
-                  storageService.setCurrentUser(adminUser);
-                  setCurrentUser(adminUser);
-                  setRole('admin');
-                  refreshDonors();
-                  triggerToast('تم التحقق وتسجيل الدخول كمسؤول بنجاح 🛡️');
-                }}
-                onBackToApp={() => navigateToPage('home')}
+          </div>
+        )}
+
+        {mountedPages.has('hospital-ad') && (
+          <div className={activePage === 'hospital-ad' ? 'block' : 'hidden'}>
+            <HospitalAdDetailPage
+              ad={
+                (selectedHospitalAdId && hospitalAds.find((item) => item.id === selectedHospitalAdId)) ||
+                (selectedHospitalAd && hospitalAds.find((item) => item.id === selectedHospitalAd.id)) ||
+                selectedHospitalAd ||
+                null
+              }
+              onBack={() => goBack('home')}
+              backLabel={previousEntry ? PAGE_BACK_LABELS[previousEntry.page] : 'العودة إلى الرئيسية'}
+              onTriggerToast={triggerToast}
+            />
+          </div>
+        )}
+
+        {mountedPages.has('donors') && (
+          <div className={activePage === 'donors' ? 'block' : 'hidden'}>
+            <DonorsPage
+              donors={donors}
+              districts={districts}
+              onOpenAddDonor={handleOpenAddDonor}
+              onSelectDonor={(d) => setSelectedDonor(d)}
+              onEditDonor={handleOpenEditDonor}
+              initialBloodFilter={selectedBloodFilter}
+              filterSyncToken={bloodFilterToken}
+              role={role}
+              onOpenImportModal={() => setIsImportModalOpen(true)}
+              onRefreshDonors={refreshDonors}
+              isLoadingDonors={isLoadingDonors}
+              donorLoadError={donorLoadError}
+            />
+          </div>
+        )}
+
+        {mountedPages.has('requests') && (
+          <div className={activePage === 'requests' ? 'block' : 'hidden'}>
+            <RequestsPage
+              requests={requests}
+              onOpenAddRequest={() => setIsAddRequestOpen(true)}
+              onSelectRequest={(r) => setSelectedRequest(r)}
+            />
+          </div>
+        )}
+
+        {mountedPages.has('info') && (
+          <div className={activePage === 'info' ? 'block' : 'hidden'}>
+            <DonationInfoPage />
+          </div>
+        )}
+
+        {mountedPages.has('admin') && (
+          <div className={activePage === 'admin' ? 'block' : 'hidden'}>
+            {role === 'admin' ? (
+              <AdminDashboardPage
+                role={role}
+                donors={donors}
+                requests={requests}
+                onNavigate={(p) => navigateToPage(p)}
+                onOpenRoleModal={() => setIsRoleModalOpen(true)}
+                onEditDonor={handleOpenEditDonor}
+                onDeleteDonor={handleDeleteDonor}
+                onDeleteAllDonors={handleDeleteAllDonors}
+                onOpenAddDonor={handleOpenAddDonor}
+                onToggleDonorAvailability={handleToggleDonorAvailability}
+                onUpdateRequestStatus={handleUpdateRequestStatus}
+                onDeleteRequest={handleDeleteRequest}
+                onExportBackup={handleExportBackup}
+                onImportBackup={handleImportBackup}
+                onResetDefaults={handleResetDefaults}
+                onSelectDonor={(d) => setSelectedDonor(d)}
+                onSelectRequest={(r) => setSelectedRequest(r)}
+                onOpenImportModal={() => setIsImportModalOpen(true)}
+                onLogout={handleLogout}
+                currentUser={currentUser}
+                hospitalAds={hospitalAds}
+                onHospitalAdsChange={(updatedAds) => setHospitalAds(updatedAds)}
               />
-            </div>
-          )
+            ) : (
+              <div className="py-4">
+                <AdminLoginPage
+                  isActive={activePage === 'admin'}
+                  onLoginSuccess={(adminUser) => {
+                    storageService.setCurrentUser(adminUser);
+                    setCurrentUser(adminUser);
+                    setRole('admin');
+                    refreshDonors();
+                    triggerToast('تم التحقق وتسجيل الدخول كمسؤول بنجاح 🛡️');
+                  }}
+                  onBackToApp={() => goBack('home')}
+                />
+              </div>
+            )}
+          </div>
         )}
 
-        {activePage === 'districts' && (
-          <DistrictsPage
-            role={role}
-            districts={districts}
-            donors={donors}
-            onNavigate={(p) => navigateToPage(p)}
-            onOpenRoleModal={() => setIsRoleModalOpen(true)}
-            onAddDistrict={handleAddDistrict}
-            onUpdateDistrict={handleUpdateDistrict}
-            onDeleteDistrict={handleDeleteDistrict}
-          />
+        {mountedPages.has('districts') && (
+          <div className={activePage === 'districts' ? 'block' : 'hidden'}>
+            <DistrictsPage
+              role={role}
+              districts={districts}
+              donors={donors}
+              onNavigate={(p) => navigateToPage(p)}
+              onBack={() => goBack('admin')}
+              onOpenRoleModal={() => setIsRoleModalOpen(true)}
+              onAddDistrict={handleAddDistrict}
+              onUpdateDistrict={handleUpdateDistrict}
+              onDeleteDistrict={handleDeleteDistrict}
+            />
+          </div>
         )}
 
-        {activePage === 'profile' && (
-          <ProfilePage
-            currentUser={currentUser}
-            donors={donors}
-            requests={requests}
-            role={role}
-            onUpdateUser={handleUpdateUser}
-            onToggleDonorAvailability={handleToggleDonorAvailability}
-            onOpenAddDonor={handleOpenAddDonor}
-            onEditDonor={handleOpenEditDonor}
-            onNavigate={(p) => navigateToPage(p)}
-            onTriggerToast={triggerToast}
-          />
+        {mountedPages.has('profile') && (
+          <div className={activePage === 'profile' ? 'block' : 'hidden'}>
+            <ProfilePage
+              currentUser={currentUser}
+              donors={donors}
+              requests={requests}
+              role={role}
+              onUpdateUser={handleUpdateUser}
+              onToggleDonorAvailability={handleToggleDonorAvailability}
+              onOpenAddDonor={handleOpenAddDonor}
+              onEditDonor={handleOpenEditDonor}
+              onNavigate={(p) => navigateToPage(p)}
+              onTriggerToast={triggerToast}
+            />
+          </div>
         )}
 
-        {activePage === 'history' && (
-          <DonationHistoryPage
-            currentUser={currentUser}
-            donors={donors}
-            requests={requests}
-            onUpdateUser={handleUpdateUser}
-            onSelectRequest={(r) => setSelectedRequest(r)}
-            onSelectDonor={(d) => setSelectedDonor(d)}
-            onOpenAddDonor={handleOpenAddDonor}
-            onTriggerToast={triggerToast}
-          />
+        {mountedPages.has('history') && (
+          <div className={activePage === 'history' ? 'block' : 'hidden'}>
+            <DonationHistoryPage
+              currentUser={currentUser}
+              donors={donors}
+              requests={requests}
+              onUpdateUser={handleUpdateUser}
+              onSelectRequest={(r) => setSelectedRequest(r)}
+              onSelectDonor={(d) => setSelectedDonor(d)}
+              onOpenAddDonor={handleOpenAddDonor}
+              onTriggerToast={triggerToast}
+            />
+          </div>
         )}
 
-        {activePage === 'about' && (
-          <AboutPage
-            donors={donors}
-            requests={requests}
-            districts={districts}
-            onNavigate={(p) => navigateToPage(p)}
-          />
+        {mountedPages.has('about') && (
+          <div className={activePage === 'about' ? 'block' : 'hidden'}>
+            <AboutPage
+              donors={donors}
+              requests={requests}
+              districts={districts}
+              onNavigate={(p) => navigateToPage(p)}
+            />
+          </div>
         )}
 
-        {activePage === 'contact' && (
-          <ContactPage
-            currentUser={currentUser}
-            onOpenAddRequest={() => setIsAddRequestOpen(true)}
-            onTriggerToast={triggerToast}
-          />
+        {mountedPages.has('contact') && (
+          <div className={activePage === 'contact' ? 'block' : 'hidden'}>
+            <ContactPage
+              currentUser={currentUser}
+              onOpenAddRequest={() => setIsAddRequestOpen(true)}
+              onTriggerToast={triggerToast}
+            />
+          </div>
         )}
 
-        {activePage === 'settings' && (
-          <SettingsPage
-            currentUser={currentUser}
-            role={role}
-            donors={donors}
-            districts={districts}
-            requests={requests}
-            onToggleDonorAvailability={handleToggleDonorAvailability}
-            onRefreshData={refreshDonors}
-            onOpenInstallModal={() => setIsInstallModalOpen(true)}
-            onOpenRoleModal={() => setIsRoleModalOpen(true)}
-            onNavigate={(p) => navigateToPage(p)}
-            onLogout={handleLogout}
-            onTriggerToast={triggerToast}
-            onCheckForUpdates={() => runAppUpdateCheck(true)}
-          />
+        {mountedPages.has('settings') && (
+          <div className={activePage === 'settings' ? 'block' : 'hidden'}>
+            <SettingsPage
+              currentUser={currentUser}
+              role={role}
+              donors={donors}
+              districts={districts}
+              requests={requests}
+              onToggleDonorAvailability={handleToggleDonorAvailability}
+              onRefreshData={refreshDonors}
+              onOpenInstallModal={() => setIsInstallModalOpen(true)}
+              onOpenRoleModal={() => setIsRoleModalOpen(true)}
+              onNavigate={(p) => navigateToPage(p)}
+              onLogout={handleLogout}
+              onTriggerToast={triggerToast}
+              onCheckForUpdates={() => runAppUpdateCheck(true)}
+            />
+          </div>
         )}
 
         {/* Footer with Official Sponsorship, Copyright & Discreet Admin Access */}
@@ -1169,8 +1586,11 @@ export default function App() {
       <BottomNav
         activePage={activePage}
         onNavigate={(p) => {
-          navigateToPage(p);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          if (p === activePage) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            navigateToPage(p);
+          }
         }}
         role={role}
         urgentRequestsCount={urgentRequestsCount}

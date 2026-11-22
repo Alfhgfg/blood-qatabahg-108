@@ -7,11 +7,27 @@ android {
         applicationId "org.alnasr.bloodqatabah"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
+        def versionPropsFile = file("../version.properties")
+        def baseVersionCode = 1
+        def baseVersionName = "1.0"
+        if (versionPropsFile.exists()) {
+            def versionProps = new Properties()
+            versionPropsFile.withInputStream { stream -> versionProps.load(stream) }
+            def propCode = versionProps.getProperty("VERSION_CODE")?.trim()
+            def propName = versionProps.getProperty("VERSION_NAME")?.trim()
+            if (propCode && propCode.isInteger() && propCode.toInteger() > 0) {
+                baseVersionCode = propCode.toInteger()
+            }
+            if (propName) {
+                baseVersionName = propName
+            }
+        }
+
         def envVersionCode = System.getenv("ANDROID_VERSION_CODE")
         def envVersionName = System.getenv("ANDROID_VERSION_NAME")
-        def parsedVersionCode = (envVersionCode != null && envVersionCode.trim().isInteger()) ? envVersionCode.trim().toInteger() : 1
-        def resolvedVersionCode = parsedVersionCode > 0 ? parsedVersionCode : 1
-        def resolvedVersionName = (envVersionName != null && !envVersionName.trim().isEmpty()) ? envVersionName.trim() : "1.0"
+        def parsedVersionCode = (envVersionCode != null && envVersionCode.trim().isInteger()) ? envVersionCode.trim().toInteger() : baseVersionCode
+        def resolvedVersionCode = Math.max(baseVersionCode, parsedVersionCode > 0 ? parsedVersionCode : baseVersionCode)
+        def resolvedVersionName = (envVersionName != null && !envVersionName.trim().isEmpty()) ? envVersionName.trim() : baseVersionName
         versionCode resolvedVersionCode
         versionName resolvedVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -26,10 +42,13 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
-    def envKeystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+    def envKeystorePath = System.getenv("ANDROID_KEYSTORE_FILE")?.trim()
     def envStorePass = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-    def envKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
-    def envKeyPass = System.getenv("ANDROID_KEY_PASSWORD") ?: envStorePass
+    def envKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.trim()
+    def envKeyPass = System.getenv("ANDROID_KEY_PASSWORD")
+    if (!envKeyPass) {
+        envKeyPass = envStorePass
+    }
     File resolvedKeystoreFile = null
     if (envKeystorePath && envStorePass && envKeyAlias && envKeyPass) {
         def candidate = file(envKeystorePath)

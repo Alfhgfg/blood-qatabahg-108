@@ -14,15 +14,18 @@ import {
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { storageService, MASTER_ADMIN_EMAIL, MASTER_ADMIN_EMAILS } from '../services/storageService';
+import { useRegisterBackHandler } from '../services/backHandlerRegistry';
 
 interface AdminLoginPageProps {
   onLoginSuccess: (adminUser: UserAccount) => void;
   onBackToApp: () => void;
+  isActive?: boolean;
 }
 
 export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
   onLoginSuccess,
-  onBackToApp
+  onBackToApp,
+  isActive = true
 }) => {
   const [email, setEmail] = useState(MASTER_ADMIN_EMAIL);
   const [password, setPassword] = useState('');
@@ -62,6 +65,17 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [resetSuccessMessage, setResetSuccessMessage] = useState('');
+
+  useRegisterBackHandler(
+    'admin-login-recovery',
+    isActive && isRecoveryMode,
+    () => {
+      setIsRecoveryMode(false);
+      setError('');
+      setResetSuccessMessage('');
+    },
+    20
+  );
 
   const recordFailedClientAttempt = () => {
     try {

@@ -17,12 +17,14 @@ interface HospitalAdDetailPageProps {
   ad: HospitalAd | null;
   onBack: () => void;
   onTriggerToast?: (msg: string) => void;
+  backLabel?: string;
 }
 
 export const HospitalAdDetailPage: React.FC<HospitalAdDetailPageProps> = ({
   ad,
   onBack,
-  onTriggerToast
+  onTriggerToast,
+  backLabel = 'العودة إلى الرئيسية'
 }) => {
   if (!ad) {
     return (
@@ -65,7 +67,7 @@ export const HospitalAdDetailPage: React.FC<HospitalAdDetailPageProps> = ({
           className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-white hover:bg-slate-50 border border-slate-200/90 text-slate-700 font-bold text-xs shadow-2xs transition-all active:scale-98 cursor-pointer"
         >
           <ArrowRight className="w-4 h-4 text-rose-700" />
-          <span>العودة إلى الرئيسية</span>
+          <span>{backLabel}</span>
         </button>
 
         <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-3 py-1 rounded-xl">

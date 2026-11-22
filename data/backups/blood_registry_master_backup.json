@@ -830,7 +830,7 @@
     },
     {
       "id": "donor-6",
-      "fullName": "ماجد علي الشوكي",
+      "fullName": "غير متااح .....",
       "phone": "737890123",
       "bloodType": "A-",
       "district": "حمر وشخب",
@@ -838,7 +838,8 @@
       "isAvailable": false,
       "lastDonationDate": "2026-09-28",
       "notes": "تبرع مؤخراً - يحتاج فترة راحة أسبوعين للجاهزية التامة",
-      "createdAt": "2026-08-18T11:45:00Z"
+      "createdAt": "2026-08-18T11:45:00Z",
+      "whatsappOptIn": true
     },
     {
       "id": "donor-7",
@@ -1349,16 +1350,16 @@
       "minUpgradeFromVersionCode": 1,
       "mandatory": false,
       "releaseNotes": "اختبار تحديث مباشر",
-      "releasedAt": "2026-11-22T22:14:05.408Z"
+      "releasedAt": "2026-11-22T22:42:47.519Z"
     },
     "web": {
       "versionCode": 2,
       "versionName": "1.1.0",
       "mandatory": false,
       "releaseNotes": "تحديث ويب تجريبي",
-      "releasedAt": "2026-11-22T22:14:05.408Z"
+      "releasedAt": "2026-11-22T22:42:47.519Z"
     },
-    "updatedAt": "2026-11-22T22:14:05.408Z",
+    "updatedAt": "2026-11-22T22:42:47.519Z",
     "updatedBy": "admin"
   },
   "users": [

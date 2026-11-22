@@ -85,7 +85,7 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
     }
   }, [isOpen]);
 
-  // Lock body scroll, listen for Escape / Android backbutton when open
+  // Lock body scroll and listen for Escape when open
   useEffect(() => {
     if (!isOpen) return;
 
@@ -98,18 +98,11 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
       }
     };
 
-    const handleAndroidBackButton = (e: Event) => {
-      e.preventDefault?.();
-      onClose();
-    };
-
     window.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('backbutton', handleAndroidBackButton);
 
     return () => {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('backbutton', handleAndroidBackButton);
     };
   }, [isOpen, onClose]);
 
@@ -181,7 +174,6 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({
   const handleNavClick = (page: ActivePage) => {
     onNavigate(page);
     onClose();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleActionClick = (action: () => void) => {

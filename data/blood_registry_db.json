@@ -830,7 +830,7 @@
     },
     {
       "id": "donor-6",
-      "fullName": "ماجد علي الشوكي",
+      "fullName": "غير متااح .....",
       "phone": "737890123",
       "bloodType": "A-",
       "district": "حمر وشخب",
@@ -838,7 +838,8 @@
       "isAvailable": false,
       "lastDonationDate": "2026-09-28",
       "notes": "تبرع مؤخراً - يحتاج فترة راحة أسبوعين للجاهزية التامة",
-      "createdAt": "2026-08-18T11:45:00Z"
+      "createdAt": "2026-08-18T11:45:00Z",
+      "whatsappOptIn": true
     },
     {
       "id": "donor-7",
